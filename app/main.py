@@ -1,6 +1,10 @@
 """FastAPI application for the Restaurant Leads Scraper."""
 
 import logging
+import os
+import shutil
+import subprocess
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -18,7 +22,56 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
-app = FastAPI(title="Restaurant Leads Scraper", version="2.0.0")
+logger = logging.getLogger(__name__)
+
+
+def _ensure_playwright_browsers():
+    """Install Playwright Chromium if not already present."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            # Try to get the executable path — if it exists, browser is installed
+            p.chromium.executable_path
+            logger.info("Playwright Chromium already installed.")
+            return
+    except Exception:
+        pass
+
+    logger.info("Playwright Chromium not found. Installing (this may take 1-2 minutes)...")
+    try:
+        subprocess.run(
+            ["playwright", "install", "--with-deps", "chromium"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        logger.info("Playwright Chromium installed successfully.")
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Failed to install Chromium with deps, trying without: {e.stderr[:200]}")
+        try:
+            subprocess.run(
+                ["playwright", "install", "chromium"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            logger.info("Playwright Chromium installed (without system deps).")
+        except Exception as e2:
+            logger.error(f"Failed to install Playwright Chromium: {e2}")
+    except Exception as e:
+        logger.error(f"Failed to install Playwright Chromium: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """App startup/shutdown lifecycle."""
+    _ensure_playwright_browsers()
+    yield
+
+
+app = FastAPI(title="Restaurant Leads Scraper", version="2.0.0", lifespan=lifespan)
 
 # Static files and templates
 BASE_DIR = Path(__file__).resolve().parent
