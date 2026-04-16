@@ -126,7 +126,7 @@ def _parse_zip_code(zip_line: str) -> dict:
 async def run_scrape_job(request: ScrapeRequest) -> str:
     """
     Start a scraping job. Returns the job ID.
-    The job runs in the background.
+    The job runs in the background (Playwright mode) or inline (HTTP mode).
     """
     job_id = str(uuid.uuid4())[:8]
     job = ScrapeJob(
@@ -146,8 +146,14 @@ async def run_scrape_job(request: ScrapeRequest) -> str:
         industry=request.search_terms[0] if request.search_terms else "",
     )
 
-    # Run the job in background
-    asyncio.create_task(_execute_job(job, request))
+    if _USE_PLAYWRIGHT:
+        # Playwright is slow (minutes) — run in background
+        asyncio.create_task(_execute_job(job, request))
+    else:
+        # HTTP mode is fast (~5-10s) — run inline so the response
+        # contains results (avoids multi-machine routing issues)
+        await _execute_job(job, request)
+
     return job_id
 
 

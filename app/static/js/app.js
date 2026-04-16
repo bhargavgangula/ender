@@ -242,13 +242,24 @@ async function startScraping() {
         if (!response.ok) throw new Error(data.error || 'Failed to start scraping');
 
         currentJobId = data.job_id;
-        showToast('Scraping started!', 'success');
 
-        document.getElementById('progressContainer').style.display = 'block';
-        document.getElementById('progressBar').style.width = '0%';
-        document.getElementById('liveIndicator').style.display = 'flex';
-
-        startPolling();
+        // If results returned inline (HTTP/sync mode), display immediately
+        if (data.status === 'completed' && data.results) {
+            allResults = data.results || [];
+            updateLiveStats();
+            renderResults(allResults);
+            showToast(`Done! Found ${data.results_count} leads.`, 'success');
+            startBtn.disabled = false;
+            startBtn.innerHTML = '<i class="fas fa-rocket"></i> Start Scraping';
+            document.getElementById('statRunning').textContent = 'Done';
+        } else {
+            // Async mode (Playwright) — poll for progress
+            showToast('Scraping started!', 'success');
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('liveIndicator').style.display = 'flex';
+            startPolling();
+        }
     } catch (error) {
         showToast(error.message, 'error');
         startBtn.disabled = false;
