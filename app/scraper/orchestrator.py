@@ -6,13 +6,30 @@ import uuid
 from datetime import datetime
 
 from app.models import ScrapeRequest, ScrapeJob, LeadResult
-from app.scraper.google_maps import scrape_google_maps
 from app.scraper.email_extractor import extract_all_emails
 from app.scraper.pos_detector import detect_pos_system
 from app.config import MAX_CONCURRENT_BROWSERS
 from app import database as db
 
 logger = logging.getLogger(__name__)
+
+# Auto-detect Playwright/Chromium availability
+_USE_PLAYWRIGHT = False
+try:
+    import os
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        if os.path.exists(p.chromium.executable_path):
+            _USE_PLAYWRIGHT = True
+            logger.info("Playwright + Chromium available — using full browser scraping.")
+except Exception:
+    pass
+
+if _USE_PLAYWRIGHT:
+    from app.scraper.google_maps import scrape_google_maps
+else:
+    from app.scraper.google_maps_http import scrape_google_maps
+    logger.info("Playwright not available — using lightweight HTTP scraping.")
 
 # In-memory job storage (for real-time progress tracking)
 _jobs: dict[str, ScrapeJob] = {}
