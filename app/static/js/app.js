@@ -252,6 +252,7 @@ async function startScraping() {
             startBtn.disabled = false;
             startBtn.innerHTML = '<i class="fas fa-rocket"></i> Start Scraping';
             document.getElementById('statRunning').textContent = 'Done';
+            loadDbStats();
         } else {
             // Async mode (Playwright) — poll for progress
             showToast('Scraping started!', 'success');
