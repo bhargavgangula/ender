@@ -15,13 +15,17 @@ from app.models import LeadResult
 logger = logging.getLogger(__name__)
 
 _client = None
+_init_attempted = False
 
 
 def get_client():
     """Get or create a Supabase client."""
-    global _client
-    if _client is not None:
+    global _client, _init_attempted
+
+    if _init_attempted:
         return _client
+
+    _init_attempted = True
 
     if create_client is None:
         logger.warning("supabase package not installed. Database disabled.")
