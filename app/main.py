@@ -2,8 +2,8 @@
 
 import logging
 import os
-import shutil
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -41,7 +41,7 @@ def _ensure_playwright_browsers():
     logger.info("Playwright Chromium not found. Installing (this may take 1-2 minutes)...")
     try:
         subprocess.run(
-            ["playwright", "install", "--with-deps", "chromium"],
+            [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
             check=True,
             capture_output=True,
             text=True,
@@ -52,7 +52,7 @@ def _ensure_playwright_browsers():
         logger.warning(f"Failed to install Chromium with deps, trying without: {e.stderr[:200]}")
         try:
             subprocess.run(
-                ["playwright", "install", "chromium"],
+                [sys.executable, "-m", "playwright", "install", "chromium"],
                 check=True,
                 capture_output=True,
                 text=True,
