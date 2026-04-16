@@ -30,10 +30,11 @@ def _ensure_playwright_browsers():
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            # Try to get the executable path — if it exists, browser is installed
-            p.chromium.executable_path
-            logger.info("Playwright Chromium already installed.")
-            return
+            # executable_path returns the expected path even if the binary isn't downloaded
+            path = p.chromium.executable_path
+            if os.path.exists(path):
+                logger.info("Playwright Chromium already installed.")
+                return
     except Exception:
         pass
 
