@@ -496,7 +496,7 @@ async def _extract_fb_page_data(page) -> dict:
         if (!result.website) {
             const bodyText = document.body.innerText;
             // First, try to find URL right after a "Website" label
-            const websiteLabel = bodyText.match(/Website\s*\n?\s*(https?:\/\/\S+|(?:www\.)?[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}\S*)/i);
+            const websiteLabel = bodyText.match(/Website\\s*\\n?\\s*(https?:\\/\\/\\S+|(?:www\\.)?[a-zA-Z0-9][-a-zA-Z0-9]*\\.[a-zA-Z]{2,}\\S*)/i);
             if (websiteLabel) {
                 const candidate = websiteLabel[1].trim();
                 if (!isSkipUrl(candidate)) {
