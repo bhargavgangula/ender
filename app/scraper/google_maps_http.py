@@ -44,7 +44,7 @@ def _is_business_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         domain = parsed.netloc.lower().replace("www.", "")
-        return not any(skip in domain for skip in _SKIP_DOMAINS)
+        return not any(domain == skip or domain.endswith("." + skip) for skip in _SKIP_DOMAINS)
     except Exception:
         return False
 
