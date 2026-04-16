@@ -12,6 +12,17 @@ from app.config import REQUEST_TIMEOUT, MAX_CONCURRENT_REQUESTS
 
 logger = logging.getLogger(__name__)
 
+# Check if Playwright + Chromium is available at module level
+_HAS_PLAYWRIGHT = False
+try:
+    import os as _os
+    from playwright.sync_api import sync_playwright as _sync_pw
+    with _sync_pw() as _p:
+        if _os.path.exists(_p.chromium.executable_path):
+            _HAS_PLAYWRIGHT = True
+except Exception:
+    pass
+
 EMAIL_REGEX = re.compile(
     r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
 )
@@ -193,6 +204,9 @@ async def _playwright_scrape_website(url: str) -> tuple[list[str], dict[str, str
     """
     emails = []
     social_links = {"facebook": "", "instagram": "", "twitter": "", "linkedin": ""}
+
+    if not _HAS_PLAYWRIGHT:
+        return emails, social_links
 
     try:
         from playwright.async_api import async_playwright
@@ -378,6 +392,9 @@ async def extract_facebook_email(facebook_url: str) -> list[str]:
     if not facebook_url:
         return []
 
+    if not _HAS_PLAYWRIGHT:
+        return []
+
     emails = []
     base = facebook_url.rstrip("/")
 
@@ -488,6 +505,9 @@ async def extract_instagram_email(instagram_url: str) -> list[str]:
     Instagram also blocks plain HTTP requests, needs a real browser.
     """
     if not instagram_url:
+        return []
+
+    if not _HAS_PLAYWRIGHT:
         return []
 
     emails = []
