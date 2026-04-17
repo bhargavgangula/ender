@@ -59,6 +59,12 @@ async def start_scrape(request: ScrapeRequest):
             "results": [r.model_dump() for r in job.results],
         }
 
+    if job and job.status == "failed":
+        return JSONResponse(
+            status_code=500,
+            content={"job_id": job_id, "error": "Scraping failed.", "status": "failed", "errors": job.errors},
+        )
+
     return {"job_id": job_id, "message": "Scraping job started!"}
 
 

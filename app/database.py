@@ -25,9 +25,8 @@ def get_client():
     if _init_attempted:
         return _client
 
-    _init_attempted = True
-
     if create_client is None:
+        _init_attempted = True
         logger.warning("supabase package not installed. Database disabled.")
         return None
 
@@ -35,14 +34,17 @@ def get_client():
     key = os.environ.get("SUPABASE_KEY", "")
 
     if not url or not key:
+        _init_attempted = True
         logger.warning("SUPABASE_URL or SUPABASE_KEY not set. Database disabled.")
         return None
 
     try:
         _client = create_client(url, key)
+        _init_attempted = True
         logger.info("Supabase client connected.")
         return _client
     except Exception as e:
+        # Don't set _init_attempted — allow retry on transient failures
         logger.error(f"Failed to connect to Supabase: {e}")
         return None
 
