@@ -1,8 +1,8 @@
 """Lightweight HTTP-based business discovery — no Playwright/Chromium needed.
 
 Used as a fallback when Playwright is not available (e.g., cloud deployments
-on platforms without Chromium). Discovers businesses via DuckDuckGo search
-and extracts basic info (name, website, address, phone) from business websites.
+on platforms without Chromium). Discovers businesses via web search (Brave Search
+primary, DuckDuckGo fallback) and extracts contact info from business websites.
 """
 
 import asyncio
@@ -26,17 +26,71 @@ _USER_AGENT = (
     "Chrome/128.0.0.0 Safari/537.36"
 )
 
-# Domains to skip when looking for business websites
+# Domains to skip — aggregators, directories, review sites, social media, etc.
 _SKIP_DOMAINS = {
+    # Search engines & big tech
     "google.com", "google.co", "gstatic.com", "googleapis.com",
-    "youtube.com", "facebook.com", "instagram.com", "twitter.com",
-    "linkedin.com", "yelp.com", "tripadvisor.com", "wikipedia.org",
-    "reddit.com", "pinterest.com", "tiktok.com", "x.com",
-    "apple.com", "amazon.com", "doordash.com", "ubereats.com",
-    "grubhub.com", "seamless.com", "postmates.com", "duckduckgo.com",
-    "mapquest.com", "loc8nearme.com", "yellowpages.com", "bbb.org",
-    "sanfranciscodrinksguide.com", "wine.com",
+    "bing.com", "yahoo.com", "duckduckgo.com", "search.brave.com",
+    "youtube.com", "apple.com", "amazon.com", "microsoft.com",
+    # Social media
+    "facebook.com", "instagram.com", "twitter.com", "x.com",
+    "linkedin.com", "reddit.com", "pinterest.com", "tiktok.com",
+    "threads.net", "snapchat.com",
+    # Review & directory sites
+    "yelp.com", "tripadvisor.com", "mapquest.com", "foursquare.com",
+    "yellowpages.com", "bbb.org", "loc8nearme.com", "chamberofcommerce.com",
+    "manta.com", "angi.com", "thumbtack.com", "homeadvisor.com",
+    "trustpilot.com", "glassdoor.com", "indeed.com",
+    # Food & restaurant aggregators
+    "doordash.com", "ubereats.com", "grubhub.com", "seamless.com",
+    "postmates.com", "opentable.com", "resy.com", "tock.com",
+    "toast.com", "toasttab.com",
+    # Media / listicle / guide sites
+    "eater.com", "infatuation.com", "gayot.com", "zagat.com",
+    "timeout.com", "thrillist.com", "foodandwine.com", "bonappetit.com",
+    "nytimes.com", "wsj.com", "newyorker.com", "cntraveler.com",
+    "travelandleisure.com", "usatoday.com", "forbes.com",
+    "michelin.com", "starchefs.com", "jamesbeard.org",
+    "ny.eater.com", "sf.eater.com", "la.eater.com",
+    "patch.com", "nextdoor.com", "buzzfeed.com", "tastingtable.com",
+    # Wikipedia & reference
+    "wikipedia.org", "wikimedia.org", "fandom.com",
+    # Booking / travel
+    "booking.com", "expedia.com", "hotels.com", "airbnb.com",
+    # Generic platforms
+    "blogspot.com", "wordpress.com", "medium.com", "substack.com",
+    "tumblr.com",
+    # Wine/alcohol specific aggregators
+    "wine.com", "totalwine.com", "drizly.com", "minibar.com",
+    "sanfranciscodrinksguide.com", "vivino.com", "wine-searcher.com",
+    # Zip code / map / guide data sites
+    "unitedstateszipcodes.org", "zip-codes.com", "city-data.com",
+    "niche.com", "areavibes.com", "bestplaces.net",
+    "whereyoueat.com", "nyc.com", "menuism.com",
 }
+
+# Patterns in titles that indicate listicle/review articles, NOT actual businesses
+_LISTICLE_PATTERNS = [
+    r"\b\d+\s+best\b",          # "10 Best Restaurants"
+    r"\bbest\s+\d+\b",          # "Best 10 Restaurants"
+    r"\btop\s+\d+\b",           # "Top 10 Restaurants"
+    r"\bbest\s+.*\s+in\b",      # "Best Restaurants in NYC"
+    r"\btop\s+.*\s+in\b",       # "Top Restaurants in NYC"
+    r"\bnear\s+me\b",           # "Restaurants Near Me"
+    r"\bnear\s+you\b",          # "Near You"
+    r"\bzip\s*code\b",          # "Restaurants in 10001 zip code"
+    r"\b\d{5}\s+[A-Z][a-z]+",   # "10001 Manhattan" (zip code + area name)
+    r"\bguide\s+to\b",          # "Guide to..."
+    r"\bultimate\s+guide\b",    # "Ultimate Guide"
+    r"\bwhere\s+to\s+eat\b",    # "Where to Eat"
+    r"\bwhere\s+to\s+drink\b",  # "Where to Drink"
+    r"\bmust[\s-]visit\b",      # "Must-visit"
+    r"\bmust[\s-]try\b",        # "Must-try"
+    r"\branking[s]?\b",         # "Rankings"
+    r"\bdelivery\s*&?\s*takeout\b",  # "Food Delivery & Takeout"
+    r"\brestaurant\s+guide\b",  # "Restaurant Guide"
+]
+_LISTICLE_RE = re.compile("|".join(_LISTICLE_PATTERNS), re.IGNORECASE)
 
 
 def _is_business_url(url: str) -> bool:
@@ -44,9 +98,20 @@ def _is_business_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
         domain = parsed.netloc.lower().replace("www.", "")
-        return not any(domain == skip or domain.endswith("." + skip) for skip in _SKIP_DOMAINS)
+        if any(domain == skip or domain.endswith("." + skip) for skip in _SKIP_DOMAINS):
+            return False
+        # Skip URLs with long paths that look like articles
+        path = parsed.path.lower()
+        if re.search(r"best[-_]|top[-_]\d|ranking|review|guide|listicle", path):
+            return False
+        return True
     except Exception:
         return False
+
+
+def _is_listicle_title(title: str) -> bool:
+    """Check if a search result title looks like a listicle/review article."""
+    return bool(_LISTICLE_RE.search(title))
 
 
 def _extract_ddg_url(href: str) -> str:
@@ -60,20 +125,77 @@ def _extract_ddg_url(href: str) -> str:
 
 def _clean_business_name(name: str) -> str:
     """Clean up a business name from search result title."""
-    # Remove common suffixes
     suffixes = [
         " - Home", " | Home", " - Official", " | Official",
         " - Yelp", " - TripAdvisor", " - MapQuest",
         " - Updated", " - Last Updated",
+        " - Order Online", " | Order Online",
+        " - Menu", " | Menu", " - Reservations",
+        " - Google Maps", " | Google Maps",
+        " - DoorDash", " | DoorDash",
+        " - OpenTable", " | OpenTable",
     ]
     for s in suffixes:
-        if s in name:
-            name = name[:name.index(s)]
+        if s.lower() in name.lower():
+            idx = name.lower().index(s.lower())
+            name = name[:idx]
     # Truncate at common separators if the name is too long
     for sep in [" | ", " - ", " — "]:
         if sep in name and len(name) > 50:
             name = name.split(sep)[0]
     return name.strip()
+
+
+# ---------------------------------------------------------------------------
+# Search Providers
+# ---------------------------------------------------------------------------
+
+async def _brave_search(session: aiohttp.ClientSession, query: str) -> list[dict]:
+    """Search Brave and return list of {name, url, snippet} dicts."""
+    url = f"https://search.brave.com/search?q={quote_plus(query)}"
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    results = []
+    try:
+        async with session.get(url, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
+            if resp.status != 200:
+                logger.warning(f"Brave Search returned status {resp.status}")
+                return results
+            html = await resp.text()
+
+        soup = BeautifulSoup(html, "lxml")
+
+        for div in soup.select("div.snippet"):
+            # Skip FAQ/People Also Ask sections
+            if div.get("id") == "faq":
+                continue
+
+            title_el = div.select_one(".title")
+            url_el = div.select_one("a[href^='http']")
+            desc_el = div.select_one(".snippet-description")
+
+            if not title_el or not url_el:
+                continue
+
+            name = title_el.get_text(strip=True)
+            href = url_el.get("href", "")
+            snippet = desc_el.get_text(strip=True) if desc_el else ""
+
+            if name and href.startswith("http"):
+                results.append({
+                    "name": name,
+                    "url": href,
+                    "snippet": snippet,
+                })
+
+    except Exception as e:
+        logger.error(f"Brave Search failed: {e}")
+
+    return results
 
 
 async def _ddg_search(session: aiohttp.ClientSession, query: str) -> list[dict]:
@@ -89,7 +211,7 @@ async def _ddg_search(session: aiohttp.ClientSession, query: str) -> list[dict]:
         async with session.get(url, headers=headers,
                                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as resp:
             if resp.status != 200:
-                logger.warning(f"DuckDuckGo returned status {resp.status}")
+                logger.debug(f"DuckDuckGo returned status {resp.status}")
                 return results
             html = await resp.text()
 
@@ -117,6 +239,19 @@ async def _ddg_search(session: aiohttp.ClientSession, query: str) -> list[dict]:
 
     return results
 
+
+async def _web_search(session: aiohttp.ClientSession, query: str) -> list[dict]:
+    """Search the web using Brave (primary) with DuckDuckGo fallback."""
+    results = await _brave_search(session, query)
+    if results:
+        return results
+    logger.info("Brave Search returned no results, falling back to DuckDuckGo")
+    return await _ddg_search(session, query)
+
+
+# ---------------------------------------------------------------------------
+# Website Scraping
+# ---------------------------------------------------------------------------
 
 async def _scrape_business_website(session: aiohttp.ClientSession, url: str) -> dict:
     """Fetch a business website and extract contact info + structured data."""
@@ -181,7 +316,6 @@ async def _scrape_business_website(session: aiohttp.ClientSession, url: str) -> 
             match = re.search(pattern, html, re.IGNORECASE)
             if match:
                 link = match.group(0).rstrip('/"')
-                # Skip generic/tracking links
                 if "/tr?" not in link and "/sharer" not in link:
                     info[key] = link
 
@@ -190,6 +324,10 @@ async def _scrape_business_website(session: aiohttp.ClientSession, url: str) -> 
 
     return info
 
+
+# ---------------------------------------------------------------------------
+# Main Scraping Function
+# ---------------------------------------------------------------------------
 
 async def scrape_google_maps(
     search_term: str,
@@ -204,37 +342,53 @@ async def scrape_google_maps(
     """
     HTTP-based business discovery — fallback when Playwright is unavailable.
 
-    Uses DuckDuckGo search to find businesses, then scrapes their websites
-    for contact information. Same interface as google_maps.scrape_google_maps.
+    Strategy:
+    1. Search for businesses using Brave Search (primary) / DuckDuckGo (fallback)
+    2. Filter out listicle articles, review sites, and aggregators
+    3. Enrich remaining business websites with contact info via scraping
     """
-    query = f"{search_term} {location}".strip()
-    logger.info(f"[HTTP mode] Searching: {query}")
+    full_location = f"{city} {state} {zipcode}".strip() or location
+    logger.info(f"[HTTP mode] Searching: {search_term} in {full_location}")
 
     connector = aiohttp.TCPConnector(limit=5, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        # Search with different query variations to find business websites
         all_leads: dict[str, LeadResult] = {}
 
+        # Multiple search queries to maximize real business results
         search_queries = [
             f"{search_term} {city} {state} {zipcode}",
-            f"{search_term} near {location}",
+            f"{search_term} near {full_location}",
+            f"{search_term} {city} {state} menu phone",
         ]
 
         for sq in search_queries:
             if len(all_leads) >= max_results:
                 break
 
-            ddg_results = await _ddg_search(session, sq)
+            search_results = await _web_search(session, sq)
+            logger.info(f"[HTTP mode] Query '{sq}' returned {len(search_results)} raw results")
 
-            for item in ddg_results:
+            for item in search_results:
                 if len(all_leads) >= max_results:
                     break
 
                 url = item["url"]
-                name = _clean_business_name(item["name"])
+                title = item["name"]
 
-                # Only keep direct business websites
+                # Filter out non-business URLs
                 if not _is_business_url(url):
+                    logger.debug(f"  SKIP (aggregator): {title[:50]}")
+                    continue
+
+                # Filter out listicle/review titles
+                if _is_listicle_title(title):
+                    logger.debug(f"  SKIP (listicle): {title[:50]}")
+                    continue
+
+                name = _clean_business_name(title)
+
+                # Skip if name is too generic or too short
+                if len(name) < 3:
                     continue
 
                 if name in all_leads:
@@ -251,7 +405,7 @@ async def scrape_google_maps(
                     website=url,
                 )
 
-                # Extract info from snippet (phone, address)
+                # Extract info from snippet
                 snippet = item.get("snippet", "")
                 phone_match = re.search(r'\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}', snippet)
                 if phone_match:
@@ -276,7 +430,8 @@ async def scrape_google_maps(
                     lead.phone = info["phone"]
                 if info.get("address") and not lead.address:
                     lead.address = info["address"]
-                if info.get("name") and not lead.name:
+                # Use JSON-LD name if it's cleaner than the search title
+                if info.get("name") and (not lead.name or len(info["name"]) < len(lead.name)):
                     lead.name = info["name"]
                 if info.get("rating"):
                     lead.rating = info["rating"]
@@ -302,5 +457,5 @@ async def scrape_google_maps(
             elif isinstance(result, Exception):
                 logger.error(f"Error enriching lead: {result}")
 
-    logger.info(f"[HTTP mode] Completed. Found {len(results)} businesses for '{query}'")
+    logger.info(f"[HTTP mode] Completed. Found {len(results)} businesses for '{search_term}' in {full_location}")
     return results
