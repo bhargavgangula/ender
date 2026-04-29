@@ -6,13 +6,30 @@ import uuid
 from datetime import datetime
 
 from app.models import ScrapeRequest, ScrapeJob, LeadResult
-from app.scraper.google_maps import scrape_google_maps
 from app.scraper.email_extractor import extract_all_emails
 from app.scraper.pos_detector import detect_pos_system
 from app.config import MAX_CONCURRENT_BROWSERS
 from app import database as db
 
 logger = logging.getLogger(__name__)
+
+# Auto-detect Playwright/Chromium availability
+_USE_PLAYWRIGHT = False
+try:
+    import os
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        if os.path.exists(p.chromium.executable_path):
+            _USE_PLAYWRIGHT = True
+            logger.info("Playwright + Chromium available — using full browser scraping.")
+except Exception:
+    pass
+
+if _USE_PLAYWRIGHT:
+    from app.scraper.google_maps import scrape_google_maps
+else:
+    from app.scraper.google_maps_http import scrape_google_maps
+    logger.info("Playwright not available — using lightweight HTTP scraping.")
 
 # In-memory job storage (for real-time progress tracking)
 _jobs: dict[str, ScrapeJob] = {}
@@ -109,7 +126,7 @@ def _parse_zip_code(zip_line: str) -> dict:
 async def run_scrape_job(request: ScrapeRequest) -> str:
     """
     Start a scraping job. Returns the job ID.
-    The job runs in the background.
+    The job runs in the background (Playwright mode) or inline (HTTP mode).
     """
     job_id = str(uuid.uuid4())[:8]
     job = ScrapeJob(
@@ -129,8 +146,14 @@ async def run_scrape_job(request: ScrapeRequest) -> str:
         industry=request.search_terms[0] if request.search_terms else "",
     )
 
-    # Run the job in background
-    asyncio.create_task(_execute_job(job, request))
+    if _USE_PLAYWRIGHT:
+        # Playwright is slow (minutes) — run in background
+        asyncio.create_task(_execute_job(job, request))
+    else:
+        # HTTP mode is fast (~5-10s) — run inline so the response
+        # contains results (avoids multi-machine routing issues)
+        await _execute_job(job, request)
+
     return job_id
 
 

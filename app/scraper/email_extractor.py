@@ -12,6 +12,17 @@ from app.config import REQUEST_TIMEOUT, MAX_CONCURRENT_REQUESTS
 
 logger = logging.getLogger(__name__)
 
+# Check if Playwright + Chromium is available at module level
+_HAS_PLAYWRIGHT = False
+try:
+    import os as _os
+    from playwright.sync_api import sync_playwright as _sync_pw
+    with _sync_pw() as _p:
+        if _os.path.exists(_p.chromium.executable_path):
+            _HAS_PLAYWRIGHT = True
+except Exception:
+    pass
+
 EMAIL_REGEX = re.compile(
     r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
 )
@@ -193,6 +204,9 @@ async def _playwright_scrape_website(url: str) -> tuple[list[str], dict[str, str
     """
     emails = []
     social_links = {"facebook": "", "instagram": "", "twitter": "", "linkedin": ""}
+
+    if not _HAS_PLAYWRIGHT:
+        return emails, social_links
 
     try:
         from playwright.async_api import async_playwright
@@ -378,6 +392,9 @@ async def extract_facebook_email(facebook_url: str) -> list[str]:
     if not facebook_url:
         return []
 
+    if not _HAS_PLAYWRIGHT:
+        return []
+
     emails = []
     base = facebook_url.rstrip("/")
 
@@ -492,53 +509,60 @@ async def extract_instagram_email(instagram_url: str) -> list[str]:
 
     emails = []
 
+    # Try Playwright first if available
+    if _HAS_PLAYWRIGHT:
+        try:
+            from playwright.async_api import async_playwright
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                page = await browser.new_page(
+                    user_agent=(
+                        "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/128.0.0.0 Mobile Safari/537.36"
+                    ),
+                )
+                page.set_default_timeout(12000)
+
+                await page.goto(instagram_url, wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(2)
+
+                # Extract emails from rendered page
+                page_emails = await page.evaluate("""() => {
+                    const body = document.body.innerHTML.toLowerCase()
+                        .replace(/\\[at\\]/g, '@').replace(/\\(at\\)/g, '@')
+                        .replace(/\\[dot\\]/g, '.').replace(/\\(dot\\)/g, '.');
+                    const emailRegex = /[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/g;
+                    const emails = [...new Set(body.match(emailRegex) || [])];
+                    document.querySelectorAll('a[href*="mailto:"]').forEach(a => {
+                        const email = a.href.replace('mailto:', '').split('?')[0].trim().toLowerCase();
+                        if (email && email.includes('@') && !emails.includes(email)) emails.push(email);
+                    });
+                    return emails;
+                }""")
+
+                if page_emails:
+                    emails = find_emails(" ".join(page_emails))
+
+                await browser.close()
+                return emails
+
+        except Exception as e:
+            logger.debug(f"Playwright Instagram extraction failed for {instagram_url}: {e}")
+
+    # Fallback to aiohttp (when Playwright unavailable or failed)
     try:
-        from playwright.async_api import async_playwright
-
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            page = await browser.new_page(
-                user_agent=(
-                    "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/128.0.0.0 Mobile Safari/537.36"
-                ),
-            )
-            page.set_default_timeout(12000)
-
-            await page.goto(instagram_url, wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(2)
-
-            # Extract emails from rendered page
-            page_emails = await page.evaluate("""() => {
-                const body = document.body.innerHTML.toLowerCase()
-                    .replace(/\\[at\\]/g, '@').replace(/\\(at\\)/g, '@')
-                    .replace(/\\[dot\\]/g, '.').replace(/\\(dot\\)/g, '.');
-                const emailRegex = /[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}/g;
-                const emails = [...new Set(body.match(emailRegex) || [])];
-                document.querySelectorAll('a[href*="mailto:"]').forEach(a => {
-                    const email = a.href.replace('mailto:', '').split('?')[0].trim().toLowerCase();
-                    if (email && email.includes('@') && !emails.includes(email)) emails.push(email);
-                });
-                return emails;
-            }""")
-
-            if page_emails:
-                emails = find_emails(" ".join(page_emails))
-
-            await browser.close()
-
-    except Exception as e:
-        logger.debug(f"Playwright Instagram extraction failed for {instagram_url}: {e}")
-        # Fallback to aiohttp
         connector = aiohttp.TCPConnector(limit=5, ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
             html = await _fetch_page(session, instagram_url)
             if html:
                 emails = find_emails(html)
+    except Exception as e:
+        logger.debug(f"aiohttp Instagram extraction failed for {instagram_url}: {e}")
 
     return emails
 

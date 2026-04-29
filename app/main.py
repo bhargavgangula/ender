@@ -47,6 +47,24 @@ async def start_scrape(request: ScrapeRequest):
     request.zip_codes = [z.strip() for z in request.zip_codes if z.strip()]
 
     job_id = await run_scrape_job(request)
+
+    # In HTTP mode, the job completes inline — return results directly
+    job = get_job(job_id)
+    if job and job.status == "completed":
+        return {
+            "job_id": job_id,
+            "message": "Scraping completed!",
+            "status": "completed",
+            "results_count": len(job.results),
+            "results": [r.model_dump() for r in job.results],
+        }
+
+    if job and job.status == "failed":
+        return JSONResponse(
+            status_code=500,
+            content={"job_id": job_id, "error": "Scraping failed.", "status": "failed", "errors": job.errors},
+        )
+
     return {"job_id": job_id, "message": "Scraping job started!"}
 
 

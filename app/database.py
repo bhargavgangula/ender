@@ -4,33 +4,47 @@ import os
 import logging
 from datetime import datetime
 
-from supabase import create_client, Client
+try:
+    from supabase import create_client, Client
+except ImportError:
+    create_client = None
+    Client = None
 
 from app.models import LeadResult
 
 logger = logging.getLogger(__name__)
 
-_client: Client | None = None
+_client = None
+_init_attempted = False
 
 
-def get_client() -> Client | None:
+def get_client():
     """Get or create a Supabase client."""
-    global _client
-    if _client is not None:
+    global _client, _init_attempted
+
+    if _init_attempted:
         return _client
+
+    if create_client is None:
+        _init_attempted = True
+        logger.warning("supabase package not installed. Database disabled.")
+        return None
 
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_KEY", "")
 
     if not url or not key:
+        _init_attempted = True
         logger.warning("SUPABASE_URL or SUPABASE_KEY not set. Database disabled.")
         return None
 
     try:
         _client = create_client(url, key)
+        _init_attempted = True
         logger.info("Supabase client connected.")
         return _client
     except Exception as e:
+        # Don't set _init_attempted — allow retry on transient failures
         logger.error(f"Failed to connect to Supabase: {e}")
         return None
 
