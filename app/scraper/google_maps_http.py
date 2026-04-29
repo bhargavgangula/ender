@@ -67,6 +67,8 @@ _SKIP_DOMAINS = {
     "unitedstateszipcodes.org", "zip-codes.com", "city-data.com",
     "niche.com", "areavibes.com", "bestplaces.net",
     "whereyoueat.com", "nyc.com", "menuism.com",
+    "menupages.com", "allmenus.com", "zmenu.com",
+    "theinfatuation.com",
 }
 
 # Patterns in titles that indicate listicle/review articles, NOT actual businesses
@@ -316,7 +318,7 @@ async def _scrape_business_website(session: aiohttp.ClientSession, url: str) -> 
             match = re.search(pattern, html, re.IGNORECASE)
             if match:
                 link = match.group(0).rstrip('/"')
-                if "/tr?" not in link and "/sharer" not in link:
+                if "/tr" not in link.split("facebook.com")[-1][:4] and "/sharer" not in link:
                     info[key] = link
 
     except Exception as e:
